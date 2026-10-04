@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>India Map</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1c2430; --muted: #6b7686;
+    --fill: #cfe3f7; --stroke: #fff; --hover: #f5a623; --selected: #d9480f;
+    --shade-lo: #e3f0fc; --shade-hi: #1f6fb5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14181f; --card: #1d232d; --text: #e8ecf1; --muted: #93a0b2;
+            --fill: #2c4a6b; --stroke: #14181f; --hover: #f5a623; --selected: #ff7a45;
+            --shade-lo: #26405c; --shade-hi: #5aa9e6; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.25rem; margin: 8px 0 16px; }
+  .layout { display: grid; grid-template-columns: 1fr 260px; gap: 16px; align-items: start; }
+  @media (max-width: 720px) { .layout { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  #map svg { width: 100%; height: auto; max-height: 80vh; display: block; }
+  #map path { fill: var(--fill); stroke: var(--stroke); stroke-width: .8; cursor: pointer;
+              transition: fill .12s; outline: none; }
+  #map path:hover, #map path:focus-visible { fill: var(--hover) !important; }
+  #map path.selected { fill: var(--selected) !important; }
+  #tooltip { position: fixed; pointer-events: none; background: #111; color: #fff; padding: 4px 8px;
+             border-radius: 6px; font-size: .85rem; white-space: nowrap; display: none; z-index: 10; }
+  #panel h2 { margin: 0 0 4px; font-size: 1.1rem; }
+  #panel .value { font-size: 2rem; font-weight: 700; }
+  #panel p { color: var(--muted); margin: 4px 0 0; }
+  footer { color: var(--muted); font-size: .75rem; margin-top: 16px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>India — state overview</h1>
+  <div class="layout">
+    <div class="card" id="map" aria-label="Map of India"></div>
+    <aside class="card" id="panel">
+      <h2>Select a state</h2>
+      <p>Hover over the map and click a state to see its data.</p>
+    </aside>
+  </div>
+  <footer>
+    Map paths: <a href="https://github.com/VictorCazanave/svg-maps">@svg-maps/india</a>,
+    <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.
+  </footer>
+</main>
+<div id="tooltip"></div>
+
+<script>
+  // Rails endpoint serving the job counts (map_feeder.json from `rake serpapi:fetch_map_feeder`).
+  const DATA_URL = '/api/v1/state_stats';
+
+  // Cities used as search locations -> state id in india.json. Extend as needed.
+  const CITY_TO_STATE = {
+    'pune': 'mh', 'mumbai': 'mh', 'nagpur': 'mh', 'bengaluru': 'ka', 'bangalore': 'ka',
+    'hyderabad': 'tg', 'chennai': 'tn', 'kolkata': 'wb', 'ahmedabad': 'gj',
+    'delhi ncr': 'dl', 'new delhi': 'dl', 'gurgaon': 'hr', 'gurugram': 'hr',
+    'noida': 'up', 'jaipur': 'rj', 'kochi': 'kl', 'chandigarh': 'ch'
+  };
+
+  // Accepts { "Karnataka": 10 } or { "Karnataka": { count: 10 } }; keys may be state
+  // names, two-letter ids, or known cities. Counts for the same state are summed.
+  function normalize(raw, map) {
+    const norm = (s) => s.toLowerCase().trim();
+    const byName = Object.fromEntries(map.locations.map((l) => [norm(l.name), l.id]));
+    const ids = new Set(map.locations.map((l) => l.id));
+    const out = {};
+    for (const [key, val] of Object.entries(raw || {})) {
+      const k = norm(key);
+      const id = byName[k] || (ids.has(k) ? k : CITY_TO_STATE[k]);
+      const n = typeof val === 'number' ? val : Number(val?.count ?? 0);
+      if (id) out[id] = (out[id] || 0) + n;
+      else console.warn('india map: no state for key', key);
+    }
+    return out;
+  }
+
+  const $ = (id) => document.getElementById(id);
+  const NS = 'http://www.w3.org/2000/svg';
+  const tooltip = $('tooltip'), panel = $('panel');
+  let selected = null;
+
+  const label = (loc, data) => `${loc.name} (${data[loc.id] ?? 0})`;
+
+  function render(map, data) {
+    const max = Math.max(1, ...Object.values(data));
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', map.viewBox);
+    svg.setAttribute('role', 'group');
+
+    map.locations.forEach((loc) => {
+      const p = document.createElementNS(NS, 'path');
+      p.setAttribute('d', loc.path);
+      p.setAttribute('id', loc.id);
+      p.setAttribute('tabindex', '0');
+      p.setAttribute('role', 'button');
+      p.setAttribute('aria-label', label(loc, data));
+      // Shade by value: color-mix between light and dark
+      const pct = Math.round(((data[loc.id] ?? 0) / max) * 100);
+      p.style.fill = `color-mix(in srgb, var(--shade-hi) ${pct}%, var(--shade-lo))`;
+
+      p.addEventListener('mousemove', (e) => {
+        tooltip.textContent = label(loc, data);
+        tooltip.style.display = 'block';
+        tooltip.style.left = e.clientX + 12 + 'px';
+        tooltip.style.top = e.clientY + 12 + 'px';
+      });
+      p.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+      p.addEventListener('click', () => select(p, loc, data));
+      p.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(p, loc, data); }
+      });
+      svg.appendChild(p);
+    });
+    $('map').replaceChildren(svg);
+  }
+
+  function select(el, loc, data) {
+    selected?.classList.remove('selected');
+    selected = el;
+    el.classList.add('selected');
+    panel.innerHTML = '';
+    const h = document.createElement('h2'); h.textContent = loc.name;
+    const v = document.createElement('div'); v.className = 'value'; v.textContent = data[loc.id] ?? 0;
+    const p = document.createElement('p'); p.textContent = 'Count';
+    panel.append(h, v, p);
+    // Hook for your own behaviour (navigate, fetch details, ...)
+    document.dispatchEvent(new CustomEvent('state:click', { detail: { id: loc.id, name: loc.name, value: data[loc.id] ?? 0 } }));
+  }
+
+  (async () => {
+    const [map, remote] = await Promise.all([
+      fetch('india.json').then((r) => r.json()),
+      fetch(DATA_URL).then((r) => r.json()).catch(() => ({})),
+    ]);
+    render(map, normalize(remote, map));
+  })();
+</script>
+</body>
+</html>
