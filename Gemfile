@@ -35,7 +35,13 @@ gem "thruster", require: false
 # Use Rack CORS for handling Cross-Origin Resource Sharing (CORS), making cross-origin Ajax possible
 # gem "rack-cors"
 
+# SerpApi client for scraping search engine results [https://github.com/serpapi/serpapi-ruby]
+gem "serpapi"
+
 group :development, :test do
+  # Load environment variables from .env
+  gem "dotenv-rails"
+
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
 
